@@ -1,6 +1,6 @@
 # Native macOS Pomodoro Timer
 
-A clean, native-feeling Pomodoro timer for macOS written in Python. It features a dark-mode GUI, configurable timers, a "flip" animation for settings, and a custom-generated app icon.
+A clean, native-feeling Pomodoro timer for macOS written in Python. It features a dark-mode GUI, configurable timers, and a "flip" animation for settings.
 
 ## Features
 
@@ -45,16 +45,6 @@ pip install -r requirements.txt
 ```
 
 ## How to Build & Run
-
-### Generate the Icon
-
-Create the high-quality tomato icon using the helper script.
-
-```bash
-python create_icon.py
-```
-
-This generates `icon.png` (trying to use macOS QuickLook for SVG rendering first, falling back to pixel-art if needed).
 
 ### Build the App
 
