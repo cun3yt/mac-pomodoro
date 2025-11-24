@@ -13,9 +13,10 @@ OPTIONS = {
         'CFBundleVersion': "0.1.0",
         'CFBundleShortVersionString': "0.1.0",
         'NSHumanReadableCopyright': "Copyright © 2025",
-        'LSUIElement': True, # Hide from Dock, show only in Menu Bar
+        'LSUIElement': True, # Keep true if we want the Dock icon HIDDEN by default (standard for menu bar apps)
+                             # Tkinter windows will still appear when triggered.
     },
-    'packages': ['rumps'],
+    'packages': ['rumps', 'tkinter'],
 }
 
 setup(
