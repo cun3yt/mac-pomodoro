@@ -45,6 +45,7 @@ class PomodoroClient:
                 "focus_min": 25, "rest_min": 5,
                 "focus_color": "#FF443B", "rest_color": "#8E8E93",
                 "notifications": True,
+                "startup": False,
                 "window_position": None
             }
         }
@@ -110,6 +111,13 @@ class PomodoroClient:
         tk.Label(row_notif, text="Notifications", bg="#2C2C2E", fg="white", width=15, anchor="w").pack(side="left")
         self.btn_notif = self.create_flat_button(row_notif, text="ON", command=self.toggle_notifications, bg="#333333", fg="white", font=("Helvetica", 12))
         self.btn_notif.pack(side="right")
+
+        # Startup Toggle
+        row_start = tk.Frame(self.back_frame, bg="#2C2C2E")
+        row_start.pack(fill="x", padx=40, pady=5)
+        tk.Label(row_start, text="Launch at Login", bg="#2C2C2E", fg="white", width=15, anchor="w").pack(side="left")
+        self.btn_startup = self.create_flat_button(row_start, text="OFF", command=self.toggle_startup, bg="#333333", fg="white", font=("Helvetica", 12))
+        self.btn_startup.pack(side="right")
 
         self.btn_save = self.create_flat_button(self.back_frame, text="Save & Flip Back", command=self.save_and_flip, bg="#0A84FF", fg="white")
         self.btn_save.pack(side="bottom", pady=30)
@@ -274,14 +282,25 @@ class PomodoroClient:
         self.btn_notif.default_fg = "white" if notif_on else "#666666"
         self.btn_notif.config(fg=self.btn_notif.default_fg)
 
+        # Update Startup Toggle
+        startup_on = config.get("startup", False)
+        self.btn_startup.config(text="ON" if startup_on else "OFF")
+        self.btn_startup.set_color("#333333" if startup_on else "#1C1C1E")
+        self.btn_startup.default_fg = "white" if startup_on else "#666666"
+        self.btn_startup.config(fg=self.btn_startup.default_fg)
+
     # Actions
     def send_toggle(self): self.send_command({"type": "TOGGLE"})
     def send_switch(self): self.send_command({"type": "SWITCH"})
     
     def toggle_notifications(self):
         current = self.state["config"].get("notifications", True)
-        # Optimistic update
         self.state["config"]["notifications"] = not current
+        self.update_ui()
+
+    def toggle_startup(self):
+        current = self.state["config"].get("startup", False)
+        self.state["config"]["startup"] = not current
         self.update_ui()
         
     def save_and_flip(self):
@@ -289,7 +308,7 @@ class PomodoroClient:
             new_config = self.state["config"].copy()
             new_config["focus_min"] = int(self.entries["focus_min"].get())
             new_config["rest_min"] = int(self.entries["rest_min"].get())
-            # Color and notifications are already in self.state["config"] via optimistic updates
+            # Color, notifications, startup are already in self.state["config"] via optimistic updates
             
             self.send_command({"type": "UPDATE_CONFIG", "data": new_config})
             self.animate_flip(self.back_frame, self.front_frame)
@@ -349,6 +368,7 @@ class PomodoroServer(rumps.App):
             "focus_min": 25, "rest_min": 5,
             "focus_color": "#FF443B", "rest_color": "#8E8E93",
             "notifications": True,
+            "startup": False,
             "window_position": None
         }
         self.load_config()
@@ -424,6 +444,10 @@ class PomodoroServer(rumps.App):
                new_data.get("rest_min") != self.config_data["rest_min"]:
                 time_changed = True
             
+            # Check if startup changed
+            if new_data.get("startup") != self.config_data.get("startup"):
+                self.toggle_startup_item(new_data.get("startup"))
+
             self.config_data.update(new_data)
             self.save_config()
             
@@ -453,6 +477,36 @@ class PomodoroServer(rumps.App):
             except: self.client_sock = None
 
     # --- ACTIONS ---
+
+    def toggle_startup_item(self, enable):
+        # Only works if running as a frozen app
+        if not getattr(sys, 'frozen', False):
+            return
+            
+        app_path = os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
+        app_name = "Pomodoro"
+        
+        # Use AppleScript to manage Login Items
+        if enable:
+            cmd = f'''
+            tell application "System Events"
+                if not (exists login item "{app_name}") then
+                    make login item at end with properties {{path:"{app_path}", hidden:false}}
+                end if
+            end tell
+            '''
+        else:
+            cmd = f'''
+            tell application "System Events"
+                if exists login item "{app_name}" then
+                    delete login item "{app_name}"
+                end if
+            end tell
+            '''
+        try:
+            subprocess.run(["osascript", "-e", cmd], capture_output=True)
+        except Exception as e:
+            print(f"Failed to toggle startup: {e}")
 
     def update_menu_labels(self):
         max_time = self.config_data["focus_min"] * 60 if self.mode == "Focus" else self.config_data["rest_min"] * 60
