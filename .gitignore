@@ -1,0 +1,21 @@
+# Build directories
+
+build/
+dist/
+
+# Python compiled files
+
+pycache/
+*.pyc
+
+# Mac OS metadata
+
+.DS_Store
+
+# Helper Scripts
+
+create_icon.py
+
+# User configuration
+
+~/.pomodoro_config.json
