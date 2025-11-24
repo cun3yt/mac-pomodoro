@@ -231,20 +231,25 @@ class PomodoroClient:
         self.lbl_mode.config(text=self.state["mode"])
         self.lbl_time.config(text=format_time(self.state["time_left"]))
         
-        # Button Text
+        # Button Text and Logic
+        config = self.state["config"]
+        max_time = (config["focus_min"] if self.state["mode"] == "Focus" else config["rest_min"]) * 60
+        
         if self.state["running"]:
-            self.btn_action.config(text="Stop")
-            self.btn_action.set_color("#FF3B30")
+            self.btn_action.config(text="Pause")
+            self.btn_action.set_color("#FF3B30") # Red for Pause (User accepted existing Red)
         else:
-            self.btn_action.config(text=f"Start {self.state['mode']}")
-            self.btn_action.set_color("#333333")
+            if self.state["time_left"] == max_time:
+                self.btn_action.config(text=f"Start {self.state['mode']}")
+            else:
+                self.btn_action.config(text=f"Continue {self.state['mode']}")
+            self.btn_action.set_color("#333333") # Dark Grey
 
         next_mode = "Rest" if self.state["mode"] == "Focus" else "Focus"
         self.btn_switch.config(text=f"Switch to {next_mode}")
 
         # Arc
-        config = self.state["config"]
-        total_time = (config["focus_min"] if self.state["mode"] == "Focus" else config["rest_min"]) * 60
+        total_time = max_time
         if total_time == 0: total_time = 1
         pct = self.state["time_left"] / total_time
         angle = pct * 360
@@ -263,8 +268,6 @@ class PomodoroClient:
             self.color_btns["rest_color"].set_color(config["rest_color"])
             
         # Update Notification Toggle
-        # Only update if we are NOT editing, or if it's the very first load
-        # But we are protected by self.view_mode logic in process_message now.
         notif_on = config.get("notifications", True)
         self.btn_notif.config(text="ON" if notif_on else "OFF")
         self.btn_notif.set_color("#333333" if notif_on else "#1C1C1E")
@@ -355,7 +358,11 @@ class PomodoroServer(rumps.App):
         self.running = False
         self.timer = rumps.Timer(self.on_tick, 1)
         
-        self.menu = ["Start Focus", "Switch to Rest", None, "Show Timer", "Preferences", "Quit"]
+        # Explicit Menu Items for Dynamic Labels
+        self.start_button = rumps.MenuItem("Start Focus", callback=self.toggle_timer)
+        self.switch_button = rumps.MenuItem("Switch to Rest", callback=self.switch_mode)
+        
+        self.menu = [self.start_button, self.switch_button, None, "Show Timer", "Preferences", "Quit"]
         
         # Server Setup
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -370,6 +377,7 @@ class PomodoroServer(rumps.App):
         self.socket_timer.start()
 
         self.update_title()
+        self.update_menu_labels()
 
     def socket_loop(self, _):
         # Accept connections
@@ -446,37 +454,48 @@ class PomodoroServer(rumps.App):
 
     # --- ACTIONS ---
 
-    @rumps.clicked("Start Focus")
+    def update_menu_labels(self):
+        max_time = self.config_data["focus_min"] * 60 if self.mode == "Focus" else self.config_data["rest_min"] * 60
+        
+        if self.running:
+            self.start_button.title = "Pause"
+        else:
+            if self.time_left == max_time:
+                self.start_button.title = f"Start {self.mode}"
+            else:
+                self.start_button.title = f"Continue {self.mode}"
+
+        # Switch button label
+        next_mode = "Rest" if self.mode == "Focus" else "Focus"
+        self.switch_button.title = f"Switch to {next_mode}"
+
     def toggle_timer(self, sender=None):
         if self.running: self.stop_timer()
         else: self.start_timer()
+        self.update_menu_labels()
         self.push_state()
 
     def start_timer(self):
         self.running = True
-        self.menu["Start Focus"].title = "Stop"
         self.timer.start()
+        self.update_menu_labels()
 
     def stop_timer(self):
         self.running = False
-        next_action = "Focus" if self.mode == "Focus" else "Rest"
-        self.menu["Start Focus"].title = f"Start {next_action}"
         self.timer.stop()
+        self.update_menu_labels()
 
-    @rumps.clicked("Switch to Rest")
     def switch_mode(self, sender=None):
         self.stop_timer()
         if self.mode == "Focus":
             self.mode = "Rest"
             self.time_left = self.config_data["rest_min"] * 60
-            if self.menu.get("Switch to Rest"): self.menu["Switch to Rest"].title = "Switch to Focus"
         else:
             self.mode = "Focus"
             self.time_left = self.config_data["focus_min"] * 60
-            if self.menu.get("Switch to Focus"): self.menu["Switch to Focus"].title = "Switch to Rest"
         
-        self.menu["Start Focus"].title = f"Start {self.mode}"
         self.update_title()
+        self.update_menu_labels()
         self.push_state()
 
     @rumps.clicked("Show Timer")
@@ -540,14 +559,12 @@ class PomodoroServer(rumps.App):
         if self.mode == "Focus":
             self.mode = "Rest"
             self.time_left = self.config_data["rest_min"] * 60
-            if self.menu.get("Switch to Rest"): self.menu["Switch to Rest"].title = "Switch to Focus"
         else:
             self.mode = "Focus"
             self.time_left = self.config_data["focus_min"] * 60
-            if self.menu.get("Switch to Focus"): self.menu["Switch to Focus"].title = "Switch to Rest"
             
-        self.menu["Start Focus"].title = f"Start {self.mode}"
         self.update_title()
+        self.update_menu_labels()
         self.push_state()
 
     def reset_timer_state(self):
@@ -556,6 +573,7 @@ class PomodoroServer(rumps.App):
         else:
             self.time_left = self.config_data["rest_min"] * 60
         self.update_title()
+        self.update_menu_labels()
 
     def play_alarm(self):
         sound_path = "/System/Library/Sounds/Glass.aiff"
