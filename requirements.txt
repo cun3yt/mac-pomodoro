@@ -1,0 +1,4 @@
+rumps
+py2app
+setuptools<70.0.0
+

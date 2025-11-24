@@ -1,5 +1,4 @@
 import rumps
-import threading
 import time
 import subprocess
 import json
@@ -7,12 +6,11 @@ import os
 import sys
 import socket
 import select
-import signal
 
 # NOTE: Tkinter is imported lazily in PomodoroClient to avoid RunLoop conflicts with Rumps
 
 CONFIG_FILE = os.path.expanduser("~/.pomodoro_config.json")
-SOCKET_PORT = 65432
+SOCKET_PORT = 54545
 SOCKET_HOST = '127.0.0.1'
 
 # --- SHARED UTILS ---
@@ -33,6 +31,7 @@ class PomodoroClient:
         
         self.root = tk.Tk()
         self.root.title("Pomodoro")
+        self.root.withdraw() # Hide initially to prevent jump
         self.root.geometry("350x500")
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -44,9 +43,15 @@ class PomodoroClient:
             "running": False,
             "config": {
                 "focus_min": 25, "rest_min": 5,
-                "focus_color": "#FF443B", "rest_color": "#8E8E93"
+                "focus_color": "#FF443B", "rest_color": "#8E8E93",
+                "notifications": True,
+                "window_position": None
             }
         }
+        
+        self.first_state_received = False
+        self.start_in_settings = "--settings" in sys.argv
+        self.view_mode = "timer" # "timer" or "settings"
         
         self.sock = None
         self.connect_to_server()
@@ -98,6 +103,13 @@ class PomodoroClient:
             btn = self.create_flat_button(row, text=" ■ ", command=lambda k=key: self.pick_color(k), bg="black", fg="white", font=("Helvetica", 12))
             btn.pack(side="right")
             self.color_btns[key] = btn
+
+        # Notifications Toggle
+        row_notif = tk.Frame(self.back_frame, bg="#2C2C2E")
+        row_notif.pack(fill="x", padx=40, pady=5)
+        tk.Label(row_notif, text="Notifications", bg="#2C2C2E", fg="white", width=15, anchor="w").pack(side="left")
+        self.btn_notif = self.create_flat_button(row_notif, text="ON", command=self.toggle_notifications, bg="#333333", fg="white", font=("Helvetica", 12))
+        self.btn_notif.pack(side="right")
 
         self.btn_save = self.create_flat_button(self.back_frame, text="Save & Flip Back", command=self.save_and_flip, bg="#0A84FF", fg="white")
         self.btn_save.pack(side="bottom", pady=30)
@@ -178,10 +190,44 @@ class PomodoroClient:
 
     def process_message(self, msg):
         if msg.get("type") == "STATE_UPDATE":
-            self.state = msg["data"]
+            # If in settings view, ignore config updates from server to avoid overwriting user input
+            new_state = msg["data"]
+            if self.view_mode == "settings":
+                # Only update runtime state, preserve local config being edited
+                self.state["mode"] = new_state["mode"]
+                self.state["time_left"] = new_state["time_left"]
+                self.state["running"] = new_state["running"]
+                # Do NOT update self.state["config"]
+            else:
+                self.state = new_state
+            
             self.update_ui()
+        elif msg.get("type") == "SHOW_SETTINGS":
+            if self.front_frame.winfo_ismapped():
+                self.flip_to_back()
+            self.root.lift()
 
     def update_ui(self):
+        # Apply window position on first load
+        if not self.first_state_received:
+            self.first_state_received = True
+            
+            # Position
+            pos = self.state["config"].get("window_position")
+            if pos:
+                self.root.geometry(pos)
+            else:
+                # Default to right side
+                ws = self.root.winfo_screenwidth()
+                x = ws - 350 - 50
+                self.root.geometry(f"350x500+{x}+50")
+            
+            self.root.deiconify()
+            
+            # Check if we need to flip immediately
+            if self.start_in_settings:
+                self.flip_to_back()
+
         self.lbl_mode.config(text=self.state["mode"])
         self.lbl_time.config(text=format_time(self.state["time_left"]))
         
@@ -215,19 +261,36 @@ class PomodoroClient:
             self.entries["rest_min"].insert(0, str(config["rest_min"]))
             self.color_btns["focus_color"].set_color(config["focus_color"])
             self.color_btns["rest_color"].set_color(config["rest_color"])
+            
+        # Update Notification Toggle
+        # Only update if we are NOT editing, or if it's the very first load
+        # But we are protected by self.view_mode logic in process_message now.
+        notif_on = config.get("notifications", True)
+        self.btn_notif.config(text="ON" if notif_on else "OFF")
+        self.btn_notif.set_color("#333333" if notif_on else "#1C1C1E")
+        self.btn_notif.default_fg = "white" if notif_on else "#666666"
+        self.btn_notif.config(fg=self.btn_notif.default_fg)
 
     # Actions
     def send_toggle(self): self.send_command({"type": "TOGGLE"})
     def send_switch(self): self.send_command({"type": "SWITCH"})
     
+    def toggle_notifications(self):
+        current = self.state["config"].get("notifications", True)
+        # Optimistic update
+        self.state["config"]["notifications"] = not current
+        self.update_ui()
+        
     def save_and_flip(self):
         try:
             new_config = self.state["config"].copy()
             new_config["focus_min"] = int(self.entries["focus_min"].get())
             new_config["rest_min"] = int(self.entries["rest_min"].get())
+            # Color and notifications are already in self.state["config"] via optimistic updates
             
             self.send_command({"type": "UPDATE_CONFIG", "data": new_config})
             self.animate_flip(self.back_frame, self.front_frame)
+            self.view_mode = "timer" # Set back to timer mode
         except ValueError: pass
 
     def pick_color(self, key):
@@ -237,6 +300,7 @@ class PomodoroClient:
             self.color_btns[key].set_color(color)
 
     def flip_to_back(self):
+        self.view_mode = "settings"
         self.animate_flip(self.front_frame, self.back_frame)
 
     def animate_flip(self, frame_out, frame_in):
@@ -258,7 +322,18 @@ class PomodoroClient:
             time.sleep(0.02)
 
     def on_close(self):
-        if self.sock: self.sock.close()
+        # Save position
+        try:
+            geo = self.root.geometry()
+            if self.sock:
+                # Send config update with new position
+                cfg = self.state["config"].copy()
+                cfg["window_position"] = geo
+                msg = json.dumps({"type": "UPDATE_CONFIG", "data": cfg}) + "\n"
+                self.sock.sendall(msg.encode())
+                time.sleep(0.05) # Give it a moment to flush
+                self.sock.close()
+        except: pass
         self.root.destroy()
 
 # --- RUMPS APP (SERVER) ---
@@ -269,7 +344,9 @@ class PomodoroServer(rumps.App):
         
         self.config_data = {
             "focus_min": 25, "rest_min": 5,
-            "focus_color": "#FF443B", "rest_color": "#8E8E93"
+            "focus_color": "#FF443B", "rest_color": "#8E8E93",
+            "notifications": True,
+            "window_position": None
         }
         self.load_config()
 
@@ -332,9 +409,19 @@ class PomodoroServer(rumps.App):
         elif c_type == "SWITCH":
             self.switch_mode(None)
         elif c_type == "UPDATE_CONFIG":
-            self.config_data.update(cmd["data"])
+            new_data = cmd["data"]
+            # Check if times changed
+            time_changed = False
+            if new_data.get("focus_min") != self.config_data["focus_min"] or \
+               new_data.get("rest_min") != self.config_data["rest_min"]:
+                time_changed = True
+            
+            self.config_data.update(new_data)
             self.save_config()
-            self.reset_timer_state()
+            
+            if time_changed:
+                self.reset_timer_state()
+            
             self.push_state()
 
     def push_state(self):
@@ -347,6 +434,13 @@ class PomodoroServer(rumps.App):
             }
             msg = json.dumps({"type": "STATE_UPDATE", "data": state}) + "\n"
             try:
+                self.client_sock.sendall(msg.encode())
+            except: self.client_sock = None
+
+    def send_command_to_client(self, cmd):
+        if self.client_sock:
+            try:
+                msg = json.dumps(cmd) + "\n"
                 self.client_sock.sendall(msg.encode())
             except: self.client_sock = None
 
@@ -391,29 +485,32 @@ class PomodoroServer(rumps.App):
 
     @rumps.clicked("Preferences")
     def show_prefs(self, _):
-        self.launch_gui_process()
+        self.launch_gui_process(start_in_settings=True)
 
-    def launch_gui_process(self):
+    def launch_gui_process(self, start_in_settings=False):
         # Check if socket is already active (Client exists)
         if self.client_sock: 
-            # Optional: Bring to front?
+            if start_in_settings:
+                self.send_command_to_client({"type": "SHOW_SETTINGS"})
+            # Bring to front?
             return 
         
+        cmd = []
         # Launch ourselves with --gui flag
         if getattr(sys, 'frozen', False):
             # Running as .app
-            # Check if sys.argv[0] is a python script or a binary
-            # py2app sometimes sets sys.argv[0] to the script path in Resources
-            
             if sys.argv[0].endswith('.py'):
-                # If it is a script, we must run it with the interpreter
-                subprocess.Popen([sys.executable, sys.argv[0], "--gui"])
+                cmd = [sys.executable, sys.argv[0], "--gui"]
             else:
-                # It is the binary
-                subprocess.Popen([sys.argv[0], "--gui"])
+                cmd = [sys.argv[0], "--gui"]
         else:
             # Running as script
-            subprocess.Popen([sys.executable, __file__, "--gui"])
+            cmd = [sys.executable, __file__, "--gui"]
+            
+        if start_in_settings:
+            cmd.append("--settings")
+            
+        subprocess.Popen(cmd)
 
     def on_tick(self, sender):
         if self.time_left > 0:
@@ -434,15 +531,19 @@ class PomodoroServer(rumps.App):
         self.stop_timer()
         self.play_alarm()
         
+        if self.config_data.get("notifications", True):
+            if self.mode == "Focus":
+                rumps.notification("Pomodoro", "Focus time is up!", "Take a break. ☕")
+            else:
+                rumps.notification("Pomodoro", "Break is over!", "Back to work! 🍅")
+
         if self.mode == "Focus":
             self.mode = "Rest"
             self.time_left = self.config_data["rest_min"] * 60
-            rumps.notification("Pomodoro", "Focus time is up!", "Take a break. ☕")
             if self.menu.get("Switch to Rest"): self.menu["Switch to Rest"].title = "Switch to Focus"
         else:
             self.mode = "Focus"
             self.time_left = self.config_data["focus_min"] * 60
-            rumps.notification("Pomodoro", "Break is over!", "Back to work! 🍅")
             if self.menu.get("Switch to Focus"): self.menu["Switch to Focus"].title = "Switch to Rest"
             
         self.menu["Start Focus"].title = f"Start {self.mode}"

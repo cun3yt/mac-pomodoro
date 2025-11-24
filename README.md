@@ -41,7 +41,7 @@ env PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I$(brew --prefix tcl-tk@8)/in
 ### 3. Install Python Packages
 
 ```bash
-pip install py2app "setuptools<70.0.0"
+pip install -r requirements.txt
 ```
 
 ## How to Build & Run
