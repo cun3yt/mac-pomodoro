@@ -13,11 +13,9 @@ OPTIONS = {
         'CFBundleVersion': "0.1.0",
         'CFBundleShortVersionString': "0.1.0",
         'NSHumanReadableCopyright': "Copyright © 2025",
+        'LSUIElement': True, # Hide from Dock, show only in Menu Bar
     },
-    # CRITICAL FIX: Force include the binary _tkinter module and the package
-    'includes': ['_tkinter', 'tkinter'],
-    'packages': ['tkinter'],
-    'excludes': ['numpy', 'matplotlib', 'scipy', 'pandas'], 
+    'packages': ['rumps'],
 }
 
 setup(
