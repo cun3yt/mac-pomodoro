@@ -13,11 +13,10 @@ OPTIONS = {
         'CFBundleVersion': "0.1.0",
         'CFBundleShortVersionString': "0.1.0",
         'NSHumanReadableCopyright': "Copyright © 2025",
+        'LSUIElement': True, # Keep true if we want the Dock icon HIDDEN by default (standard for menu bar apps)
+                             # Tkinter windows will still appear when triggered.
     },
-    # CRITICAL FIX: Force include the binary _tkinter module and the package
-    'includes': ['_tkinter', 'tkinter'],
-    'packages': ['tkinter'],
-    'excludes': ['numpy', 'matplotlib', 'scipy', 'pandas'], 
+    'packages': ['rumps', 'tkinter'],
 }
 
 setup(
